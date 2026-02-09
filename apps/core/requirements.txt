@@ -1,16 +1,36 @@
+# ResortOS Core - Lean MVP Dependencies
+# Optimized for minimal resource usage
+
+# Web Framework
 fastapi>=0.100.0
 uvicorn>=0.23.0
+python-socketio
+
+# Database
 sqlalchemy
 psycopg2-binary
-redis
+
+# AI Providers
 openai
 google-generativeai
-langchain
-langchain-community
-python-socketio
-chromadb
+
+# Vector Search (optional - using SQLite by default)
+numpy
+
+# File Processing
 pymupdf
-sentence-transformers
 python-multipart
+
+# Security
 PyJWT>=2.8.0
+
+# Monitoring
 psutil>=5.9.0
+
+# ============================================================================
+# REMOVED FOR LEAN MVP:
+# - redis (using in-memory event bus)
+# - chromadb (using SQLite vector store)
+# - sentence-transformers (using API embeddings)
+# - langchain / langchain-community (direct API calls)
+# ============================================================================

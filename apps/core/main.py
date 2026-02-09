@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import socketio
 import os
-import redis
 import psycopg2
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy import create_engine
@@ -11,6 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from models import Base, GuestModel, MessageModel, ThreadModel
 from services.translation import process_message_translation, get_usage_stats, reset_provider, AIProvider
 import json
+
+# Lean MVP: In-memory event bus (replaces Redis)
+from services.eventbus import event_bus, cache, rate_limiter, Topics
+from services.adapters import normalize_message, UnifiedMessage
 
 # Phase 4: Security, Observability, and Resilience imports
 from services.security import (
@@ -150,37 +153,31 @@ def process_event(event_data: str):
     finally:
         db.close()
 
-# Background Task for Redis Subscription
-async def redis_listener():
-    try:
-        r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-        pubsub = r.pubsub()
-        await asyncio.to_thread(pubsub.subscribe, "events")
-        
-        print("🎧 Core Service: Listening for events on 'events' channel...")
-        
-        while True:
-            message = await asyncio.to_thread(pubsub.get_message, ignore_subscribe_messages=True)
-            if message:
-                print(f"📥 Received Event: {message['data']}")
-                
-                # Sync processing for MVP
-                # In prod, push to Celery/background worker
-                await asyncio.to_thread(process_event, message['data'])
-                
-                # Emit to frontend via Socket.io
-                await sio.emit('new_message', data=message['data'])
-            await asyncio.sleep(0.01)
-    except Exception as e:
-        print(f"❌ Redis Listener Error: {str(e)}")
+# Background Task for Event Processing (In-Memory Event Bus)
+async def setup_event_handlers():
+    """Setup event handlers for the in-memory event bus."""
+    async def handle_message_event(event):
+        try:
+            data = event.payload
+            # Process and persist the message
+            await asyncio.to_thread(process_event, json.dumps(data))
+            # Emit to frontend via Socket.io
+            await sio.emit('new_message', data=data)
+        except Exception as e:
+            print(f"❌ Event handling error: {e}")
+    
+    event_bus.subscribe(Topics.MESSAGE_INCOMING, handle_message_event)
+    await event_bus.start()
+    print("🎧 Core Service: In-memory event bus started")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    task = asyncio.create_task(redis_listener())
+    # Startup: Initialize in-memory event bus
+    await setup_event_handlers()
     yield
-    # Shutdown
-    task.cancel()
+    # Shutdown: Stop event bus
+    await event_bus.stop()
 
 app = FastAPI(title="ResortOS Core", version="0.1.0", lifespan=lifespan)
 
@@ -193,7 +190,75 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "core"}
+    return {"status": "ok", "service": "core", "architecture": "lean_mvp"}
+
+
+# ============================================================================
+# WEBHOOK ENDPOINTS (Merged from Gateway)
+# ============================================================================
+
+@app.post("/webhook/whatsapp")
+async def receive_whatsapp(request: dict):
+    """
+    WhatsApp webhook endpoint.
+    Normalizes and processes incoming WhatsApp messages.
+    """
+    try:
+        unified_msg = normalize_message("whatsapp", request)
+        
+        # Publish to in-memory event bus
+        await event_bus.publish(
+            Topics.MESSAGE_INCOMING, 
+            unified_msg.model_dump()
+        )
+        
+        return {"status": "received", "id": unified_msg.id, "channel": "whatsapp"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.post("/webhook/line")
+async def receive_line(request: dict):
+    """
+    LINE Messaging API webhook endpoint.
+    Normalizes and processes incoming LINE messages.
+    """
+    try:
+        unified_msg = normalize_message("line", request)
+        
+        # Publish to in-memory event bus
+        await event_bus.publish(
+            Topics.MESSAGE_INCOMING,
+            unified_msg.model_dump()
+        )
+        
+        return {"status": "received", "id": unified_msg.id, "channel": "line"}
+    except ValueError as e:
+        # Non-message events - acknowledge but don't process
+        return {"status": "acknowledged", "note": str(e)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LINE processing failed: {str(e)}")
+
+
+@app.post("/webhook/web")
+async def receive_web_message(request: dict):
+    """
+    Direct web message endpoint.
+    For browser-based chat widgets.
+    """
+    try:
+        unified_msg = normalize_message("web", request)
+        
+        # Publish to in-memory event bus
+        await event_bus.publish(
+            Topics.MESSAGE_INCOMING,
+            unified_msg.model_dump()
+        )
+        
+        return {"status": "received", "id": unified_msg.id, "channel": "web"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Web message failed: {str(e)}")
+
 
 @app.get("/health/deep")
 def deep_health_check():
@@ -208,19 +273,19 @@ def deep_health_check():
         conn.close()
     except Exception as e:
         checks["database"] = f"failed: {str(e)}"
-        
-    # Check Redis
-    try:
-        r = redis.from_url(REDIS_URL)
-        r.ping()
-        checks["redis"] = "connected"
-    except Exception as e:
-        checks["redis"] = f"failed: {str(e)}"
     
-    if any("failed" in v for v in checks.values()):
+    # Check in-memory event bus (replaces Redis)
+    try:
+        bus_stats = event_bus.get_stats()
+        checks["event_bus"] = "running" if bus_stats["running"] else "stopped"
+        checks["cache_size"] = cache.get_stats()["size"]
+    except Exception as e:
+        checks["event_bus"] = f"error: {str(e)}"
+    
+    if "database" in checks and "failed" in checks.get("database", ""):
         raise HTTPException(status_code=503, detail=checks)
         
-    return {"status": "healthy", "checks": checks}
+    return {"status": "healthy", "checks": checks, "architecture": "lean_mvp"}
 
 
 @app.get("/ai/usage")

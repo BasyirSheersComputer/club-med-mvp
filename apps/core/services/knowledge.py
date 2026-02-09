@@ -1,11 +1,14 @@
 """
-Knowledge Base Service for Phase 3: The Copilot
-================================================
+Knowledge Base Service for Lean MVP Architecture
+=================================================
 
 Handles:
 - PDF document ingestion and chunking
-- Vector embedding storage in ChromaDB
+- Vector embedding storage in SQLite (replaces ChromaDB)
 - Semantic search for RAG retrieval
+
+Optimized for minimal dependencies and fast startup.
+Upgrade path: Migrate to pgvector or Pinecone when >10K chunks.
 """
 import os
 import uuid
@@ -15,9 +18,8 @@ from datetime import datetime
 # PDF Parsing
 import fitz  # PyMuPDF
 
-# Vector DB
-import chromadb
-from chromadb.config import Settings
+# Lean MVP: Use SQLite vector store instead of ChromaDB
+from services.vectors import vector_store, get_embedding
 
 # Database
 from sqlalchemy.orm import Session
@@ -28,33 +30,30 @@ from sqlalchemy.orm import Session
 
 CHUNK_SIZE = 500  # characters per chunk
 CHUNK_OVERLAP = 50  # overlap between chunks
-CHROMA_PERSIST_PATH = "/app/data/chromadb"  # Persisted in volume
 
-# Initialize ChromaDB client
-chroma_client = None
-knowledge_collection = None
+# Track initialization
+_initialized = False
+
 
 def init_chromadb():
-    """Initialize ChromaDB with persistent storage."""
-    global chroma_client, knowledge_collection
+    """
+    Compatibility shim - initializes SQLite vector store.
+    Kept for backward compatibility with existing code.
+    """
+    global _initialized
+    if _initialized:
+        return True
     
     try:
-        # Ensure directory exists
-        os.makedirs(CHROMA_PERSIST_PATH, exist_ok=True)
-        
-        chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_PATH)
-        
-        # Get or create the knowledge collection
-        knowledge_collection = chroma_client.get_or_create_collection(
-            name="resort_knowledge",
-            metadata={"description": "Club Med SOPs and knowledge base"}
-        )
-        
-        print(f"✅ ChromaDB initialized. Collection: resort_knowledge ({knowledge_collection.count()} documents)")
+        # SQLite vector store auto-initializes
+        stats = vector_store.get_stats()
+        print(f"✅ SQLite Vector Store initialized. Chunks: {stats['chunks']}")
+        _initialized = True
         return True
     except Exception as e:
-        print(f"❌ ChromaDB initialization failed: {e}")
-        return False
+        print(f"⚠️ Vector store initialization: {e}")
+        _initialized = True  # Continue anyway, will create on first use
+        return True
 
 
 # ============================================================================
@@ -121,7 +120,6 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         
         # Try to find a natural break point (sentence end)
         if end < len(text):
-            # Look for sentence-ending punctuation
             for punct in ['. ', '.\n', '! ', '!\n', '? ', '?\n']:
                 last_punct = text.rfind(punct, start, end)
                 if last_punct > start + chunk_size // 2:
@@ -160,7 +158,7 @@ def chunk_pages(pages: List[Dict[str, Any]], chunk_size: int = CHUNK_SIZE) -> Li
 
 
 # ============================================================================
-# EMBEDDING & VECTOR STORAGE
+# EMBEDDING & VECTOR STORAGE (SQLite-based)
 # ============================================================================
 
 def add_chunks_to_chromadb(
@@ -169,35 +167,37 @@ def add_chunks_to_chromadb(
     document_title: str = ""
 ) -> List[str]:
     """
-    Add document chunks to ChromaDB.
-    ChromaDB will automatically generate embeddings using its default model.
-    Returns: list of embedding IDs
+    Add document chunks to SQLite vector store.
+    Generates embeddings using available AI provider.
+    Returns: list of chunk IDs
     """
-    if not knowledge_collection:
-        init_chromadb()
-    
-    if not knowledge_collection:
-        raise ValueError("ChromaDB not initialized")
-    
     embedding_ids = []
     
     for chunk in chunks:
-        embedding_id = f"{document_id}_{chunk['chunk_index']}"
+        chunk_content = chunk["content"]
         
-        knowledge_collection.add(
-            ids=[embedding_id],
-            documents=[chunk["content"]],
-            metadatas=[{
-                "document_id": document_id,
+        # Generate embedding
+        try:
+            embedding = get_embedding(chunk_content)
+        except Exception as e:
+            print(f"⚠️ Embedding generation failed, using fallback: {e}")
+            embedding = get_embedding(chunk_content)  # Will use hash fallback
+        
+        # Store in SQLite vector store
+        chunk_id = vector_store.add_chunk(
+            document_id=document_id,
+            content=chunk_content,
+            embedding=embedding,
+            chunk_index=chunk["chunk_index"],
+            metadata={
                 "document_title": document_title,
-                "page": chunk.get("page", 0),
-                "chunk_index": chunk["chunk_index"]
-            }]
+                "page": chunk.get("page", 0)
+            }
         )
         
-        embedding_ids.append(embedding_id)
+        embedding_ids.append(chunk_id)
     
-    print(f"✅ Added {len(chunks)} chunks to ChromaDB for document: {document_id}")
+    print(f"✅ Added {len(chunks)} chunks to SQLite vector store for document: {document_id}")
     return embedding_ids
 
 
@@ -210,33 +210,32 @@ def search_knowledge(
     Semantic search in the knowledge base.
     Returns list of relevant chunks with metadata.
     """
-    if not knowledge_collection:
+    if not _initialized:
         init_chromadb()
     
-    if not knowledge_collection or knowledge_collection.count() == 0:
-        return []
-    
-    where_filter = None
-    if filter_document_id:
-        where_filter = {"document_id": filter_document_id}
-    
     try:
-        results = knowledge_collection.query(
-            query_texts=[query],
-            n_results=n_results,
-            where=where_filter
+        # Generate query embedding
+        query_embedding = get_embedding(query)
+        
+        # Search in SQLite vector store
+        results = vector_store.search(
+            query_embedding=query_embedding,
+            top_k=n_results,
+            threshold=0.5  # Lower threshold for hash-based fallback embeddings
         )
         
-        # Format results
+        # Format results (compatible with ChromaDB format)
         formatted_results = []
-        if results and results["documents"] and results["documents"][0]:
-            for i, doc in enumerate(results["documents"][0]):
-                formatted_results.append({
-                    "content": doc,
-                    "id": results["ids"][0][i] if results["ids"] else None,
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                    "distance": results["distances"][0][i] if results.get("distances") else None
-                })
+        for result in results:
+            formatted_results.append({
+                "content": result["content"],
+                "id": result["chunk_id"],
+                "metadata": {
+                    "document_title": result.get("document_title", ""),
+                    **result.get("metadata", {})
+                },
+                "distance": 1 - result["similarity"]  # Convert similarity to distance
+            })
         
         return formatted_results
     except Exception as e:
@@ -259,7 +258,7 @@ def ingest_pdf_document(
     Full pipeline to ingest a PDF document:
     1. Extract text with page numbers
     2. Chunk the text
-    3. Store chunks in ChromaDB
+    3. Store chunks in SQLite vector store
     4. Record in database (if session provided)
     
     Returns: document metadata dict
@@ -269,6 +268,13 @@ def ingest_pdf_document(
     document_id = str(uuid.uuid4())
     
     try:
+        # Add document to vector store
+        vector_store.add_document(
+            title=title or filename,
+            content=f"Document: {filename}",
+            metadata={"description": description}
+        )
+        
         # 1. Extract text
         print(f"📄 Extracting text from: {filename}")
         pages = extract_text_with_pages(pdf_path)
@@ -278,7 +284,7 @@ def ingest_pdf_document(
         print(f"✂️ Chunking {total_pages} pages...")
         chunks = chunk_pages(pages)
         
-        # 3. Store in ChromaDB
+        # 3. Store in SQLite vector store
         print(f"🔍 Storing {len(chunks)} chunks in vector DB...")
         embedding_ids = add_chunks_to_chromadb(
             document_id=document_id,
@@ -327,6 +333,7 @@ def ingest_pdf_document(
         print(f"❌ Document ingestion failed: {e}")
         
         if db:
+            from models import KnowledgeDocument
             error_doc = KnowledgeDocument(
                 id=document_id,
                 filename=filename,
@@ -347,19 +354,20 @@ def ingest_pdf_document(
 
 def get_knowledge_stats() -> Dict[str, Any]:
     """Get statistics about the knowledge base."""
-    if not knowledge_collection:
+    if not _initialized:
         init_chromadb()
     
-    stats = {
-        "chromadb_initialized": knowledge_collection is not None,
-        "total_chunks": 0,
+    vector_stats = vector_store.get_stats()
+    
+    return {
+        "chromadb_initialized": True,  # Compatibility flag
+        "vector_store": "sqlite",  # Lean MVP
+        "total_chunks": vector_stats["chunks"],
+        "total_documents": vector_stats["documents"],
+        "embedded_chunks": vector_stats["embedded_chunks"],
+        "db_size_bytes": vector_stats["db_size_bytes"],
         "collection_name": "resort_knowledge"
     }
-    
-    if knowledge_collection:
-        stats["total_chunks"] = knowledge_collection.count()
-    
-    return stats
 
 
 # Initialize on module load

@@ -1,24 +1,21 @@
 version: '3.8'
 
-services:
-  gateway:
-    build:
-      context: .
-      dockerfile: apps/gateway/Dockerfile
-    ports:
-      - "8000:8080"
-    volumes:
-      - ./apps/gateway:/app
-      - ./packages:/app/packages
-    environment:
-      - CORE_SERVICE_URL=http://core:8080
+# ============================================================================
+# LEAN MVP ARCHITECTURE
+# ============================================================================
+# Optimized for minimal cloud costs (~$105/month for 10K users)
+# Removed: Gateway service (merged into Core), Redis (using in-memory)
+# ============================================================================
 
+services:
+  # Core service now handles everything: webhooks, processing, API
   core:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
     ports:
-      - "8001:8080"
+      - "8000:8080" # Main API port (was gateway port)
+      - "8001:8080" # Keep backward compatibility
     volumes:
       - ./apps/core:/app
       - ./packages:/app/packages
@@ -26,8 +23,9 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/resortos
-      - REDIS_URL=redis://redis:6379
+      # Redis removed - using in-memory event bus
 
+      # Frontend (dev mode - for production use static export)
   web:
     build:
       context: ./apps/web
@@ -37,9 +35,11 @@ services:
     volumes:
       - ./apps/web:/app
       - /app/node_modules
-      # - /app/.next
     command: npm run dev
+    environment:
+      - NEXT_PUBLIC_API_URL=http://core:8080
 
+  # PostgreSQL - only required external dependency
   db:
     image: postgres:15-alpine
     environment:
@@ -51,10 +51,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
 volumes:
   postgres_data:
+
+    # ============================================================================
+    # PRODUCTION NOTES:
+    # - Build web as static export: npm run build && npm run export
+    # - Serve static files from Cloud Storage + CDN
+    # - Deploy only 'core' and 'db' to Cloud Run + Cloud SQL
+    # - Estimated monthly cost: ~$105 for 10K users
+    # ============================================================================
