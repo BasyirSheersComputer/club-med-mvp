@@ -1426,3 +1426,103 @@ def system_info():
         "endpoints_count": len(app.routes)
     }
 
+
+# ============================================================================
+# DEMO MODE: High-Stakes Presentation Endpoints
+# ============================================================================
+# These endpoints provide simulated data for demos without requiring
+# actual channel integrations (WhatsApp, LINE, WeChat, Kakao)
+# ============================================================================
+
+from services.demo import demo_simulator
+
+
+@app.get("/demo/guests")
+async def demo_get_guests():
+    """Get all demo guest profiles with full LTV and booking data."""
+    return {
+        "guests": demo_simulator.get_guests(),
+        "total": len(demo_simulator.guests)
+    }
+
+
+@app.get("/demo/guests/{guest_id}")
+async def demo_get_guest(guest_id: str):
+    """Get single guest profile with complete context."""
+    guest = demo_simulator.get_guest(guest_id)
+    if not guest:
+        raise HTTPException(status_code=404, detail=f"Guest not found: {guest_id}")
+    return guest
+
+
+@app.get("/demo/scenarios")
+async def demo_list_scenarios():
+    """List all available demo scenarios."""
+    return {"scenarios": demo_simulator.get_scenarios()}
+
+
+@app.post("/demo/simulate/{scenario_id}")
+async def demo_trigger_scenario(scenario_id: str):
+    """
+    Trigger a specific demo scenario.
+    Returns simulated message and guest context.
+    """
+    result = demo_simulator.simulate_scenario(scenario_id)
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    # Also emit to Socket.IO for real-time feed
+    await sio.emit('new_message', data=result["message"])
+    
+    return result
+
+
+@app.post("/demo/simulate/random")
+async def demo_trigger_random():
+    """Trigger a random demo scenario for varied demonstration."""
+    result = demo_simulator.simulate_random()
+    
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    
+    # Emit to Socket.IO
+    await sio.emit('new_message', data=result["message"])
+    
+    return result
+
+
+@app.get("/demo/dashboard")
+async def demo_dashboard():
+    """
+    Get comprehensive operations dashboard data.
+    Includes: Guest LTV, booking values, channel distribution,
+    SLA performance, AI metrics, and revenue at risk.
+    """
+    return demo_simulator.get_dashboard_stats()
+
+
+@app.post("/demo/reset")
+async def demo_reset():
+    """Reset demo state to initial values."""
+    return demo_simulator.reset()
+
+
+@app.get("/demo/status")
+async def demo_status():
+    """Check demo mode status and available features."""
+    return {
+        "demo_mode": True,
+        "version": "1.0.0",
+        "features": [
+            "channel_simulation",
+            "guest_personas",
+            "ltv_tracking",
+            "booking_context",
+            "multilingual_messages"
+        ],
+        "channels_available": ["whatsapp", "line", "wechat", "kakao", "web"],
+        "guest_count": len(demo_simulator.guests),
+        "scenario_count": len(demo_simulator.get_scenarios()),
+        "note": "Demo mode simulates all channels without requiring API integrations"
+    }
