@@ -1,0 +1,240 @@
+# Infrastructure Configuration Files for Phase 4
+# ===============================================
+#
+# This directory contains infrastructure configuration templates
+# for production deployment. These are NOT active configurations
+# but serve as documentation and starting points.
+
+---
+
+# Kubernetes HPA (Horizontal Pod Autoscaler)
+# Apply with: kubectl apply -f k8s/hpa.yaml
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: resortOS-core-hpa
+  namespace: resortOS
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: resortOS-core
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+
+# Cloud Run Service Configuration
+# For deployment to GCP Cloud Run
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: resortOS-core
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/execution-environment: gen2
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "2"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: gcr.io/PROJECT_ID/resortOS-core:latest
+          ports:
+            - containerPort: 8001
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: url
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/deep
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+
+# Cloud SQL High Availability Configuration
+# For PostgreSQL primary + replica setup
+
+# GCP Cloud SQL Instance (terraform-style documentation)
+# resource "google_sql_database_instance" "primary" {
+#   name             = "resortOS-db-primary"
+#   database_version = "POSTGRES_15"
+#   region           = "asia-southeast1"
+#   
+#   settings {
+#     tier = "db-custom-4-15360"
+#     availability_type = "REGIONAL"  # Enables HA
+#     
+#     backup_configuration {
+#       enabled = true
+#       start_time = "02:00"
+#       point_in_time_recovery_enabled = true
+#       transaction_log_retention_days = 7
+#       backup_retention_settings {
+#         retained_backups = 30
+#       }
+#     }
+#     
+#     ip_configuration {
+#       private_network = google_compute_network.vpc.id
+#       enable_private_path_for_google_cloud_services = true
+#     }
+#     
+#     insights_config {
+#       query_insights_enabled = true
+#     }
+#   }
+# }
+
+---
+
+# Redis Sentinel Configuration for HA
+# Memory Store or self-managed Redis
+
+# GCP Memorystore for Redis (HA mode)
+# resource "google_redis_instance" "cache" {
+#   name           = "resortOS-redis"
+#   tier           = "STANDARD_HA"
+#   memory_size_gb = 5
+#   region         = "asia-southeast1"
+#   
+#   redis_configs = {
+#     maxmemory-policy = "allkeys-lru"
+#   }
+#   
+#   maintenance_policy {
+#     weekly_maintenance_window {
+#       day = "SUNDAY"
+#       start_time {
+#         hours   = 2
+#         minutes = 0
+#       }
+#     }
+#   }
+# }
+
+---
+
+# Load Balancer Health Check Configuration
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resortOS-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "resortOS-ip"
+    networking.gke.io/managed-certificates: "resortOS-cert"
+spec:
+  rules:
+    - host: api.resortOS.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: resortOS-core
+                port:
+                  number: 8001
+
+---
+
+# TLS Configuration for Production
+# Managed by cert-manager or GCP Managed Certificates
+
+# apiVersion: networking.gke.io/v1
+# kind: ManagedCertificate
+# metadata:
+#   name: resortOS-cert
+# spec:
+#   domains:
+#     - api.resortOS.com
+#     - app.resortOS.com
+
+---
+
+# Alerting Policies (Cloud Monitoring format)
+
+# Error Rate Alert
+# {
+#   "displayName": "ResortOS High Error Rate",
+#   "conditions": [{
+#     "displayName": "Error rate > 5%",
+#     "conditionThreshold": {
+#       "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class!=\"2xx\"",
+#       "aggregations": [{
+#         "alignmentPeriod": "60s",
+#         "perSeriesAligner": "ALIGN_RATE"
+#       }],
+#       "comparison": "COMPARISON_GT",
+#       "thresholdValue": 0.05,
+#       "duration": "300s"
+#     }
+#   }],
+#   "alertStrategy": {
+#     "notificationRateLimit": {
+#       "period": "300s"
+#     }
+#   },
+#   "notificationChannels": ["projects/PROJECT_ID/notificationChannels/CHANNEL_ID"]
+# }
+
+# Latency Alert
+# {
+#   "displayName": "ResortOS High Latency",
+#   "conditions": [{
+#     "displayName": "P95 latency > 500ms",
+#     "conditionThreshold": {
+#       "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_latencies\"",
+#       "aggregations": [{
+#         "alignmentPeriod": "60s",
+#         "perSeriesAligner": "ALIGN_PERCENTILE_95"
+#       }],
+#       "comparison": "COMPARISON_GT",
+#       "thresholdValue": 500,
+#       "duration": "300s"
+#     }
+#   }]
+# }

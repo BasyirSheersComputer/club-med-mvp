@@ -1,0 +1,131 @@
+{
+  "phase1": {
+    "Gateway Health": {
+      "passed": true,
+      "details": "Status: 200",
+      "warning": false
+    },
+    "Core Health": {
+      "passed": true,
+      "details": "Status: 200",
+      "warning": false
+    },
+    "Web Health": {
+      "passed": true,
+      "details": "Status: 200",
+      "warning": false
+    },
+    "PostgreSQL Connection": {
+      "passed": true,
+      "details": "connected",
+      "warning": false
+    },
+    "Redis Connection": {
+      "passed": true,
+      "details": "connected",
+      "warning": false
+    },
+    "Gateway -> Core Connection": {
+      "passed": true,
+      "details": "core_reachable",
+      "warning": false
+    },
+    "Load Test Success Rate": {
+      "passed": true,
+      "details": "50/50 (100.0%)",
+      "warning": false
+    },
+    "Load Test Avg Latency": {
+      "passed": false,
+      "details": "893.9ms",
+      "warning": false
+    },
+    "Load Test P99 Latency": {
+      "passed": true,
+      "details": "922.9ms",
+      "warning": false
+    }
+  },
+  "phase2": {
+    "WhatsApp Webhook Accept": {
+      "passed": true,
+      "details": "ID: 1e8f2c42...",
+      "warning": false
+    },
+    "WhatsApp Malformed Handling": {
+      "passed": true,
+      "details": "Graceful: 200",
+      "warning": false
+    },
+    "Line Webhook (Japanese)": {
+      "passed": true,
+      "details": "Channel: line",
+      "warning": false
+    },
+    "Line Non-Message Event": {
+      "passed": true,
+      "details": "Acknowledged gracefully",
+      "warning": false
+    },
+    "Translation (Japanese)": {
+      "passed": true,
+      "details": "357ms",
+      "warning": false
+    },
+    "Translation (Chinese)": {
+      "passed": true,
+      "details": "336ms",
+      "warning": false
+    },
+    "Translation (French)": {
+      "passed": true,
+      "details": "343ms",
+      "warning": false
+    },
+    "Translation (Korean)": {
+      "passed": true,
+      "details": "328ms",
+      "warning": false
+    },
+    "Translation (Thai)": {
+      "passed": true,
+      "details": "330ms",
+      "warning": false
+    },
+    "Gemini Provider Status": {
+      "passed": true,
+      "details": "Failures: 0",
+      "warning": false
+    },
+    "OpenAI Provider Status": {
+      "passed": true,
+      "details": "Failures: 0",
+      "warning": false
+    },
+    "AI Fallback System": {
+      "passed": true,
+      "details": "At least one provider available",
+      "warning": false
+    },
+    "Usage Tracking Active": {
+      "passed": true,
+      "details": "Total AI calls: 15",
+      "warning": false
+    },
+    "Socket.IO Endpoint": {
+      "passed": true,
+      "details": "Status: 400",
+      "warning": false
+    },
+    "Database Persistence": {
+      "passed": true,
+      "details": "Messages persisting to PostgreSQL",
+      "warning": false
+    }
+  },
+  "summary": {
+    "passed": 23,
+    "failed": 1,
+    "warnings": 0
+  }
+}
