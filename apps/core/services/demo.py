@@ -404,6 +404,80 @@ DEMO_SCENARIOS = [
 
 
 # ============================================================================
+# DEMO DATA: SOP KNOWLEDGE BASE
+# ============================================================================
+
+@dataclass
+class SOP:
+    """Standard Operating Procedure for demo."""
+    id: str
+    title: str
+    category: str
+    content: str
+    tags: List[str]
+
+DEMO_SOPS = [
+    SOP(
+        id="SOP-001",
+        title="Check-in Process (Standard & VIP)",
+        category="Front Desk",
+        content="1. Greet guest with 'Bonjour' (Club Med signature).\n2. Verify passport and visa.\n3. For VIP (Gold/Platinum): Escort immediately to lounge for private check-in.\n4. Issue digital wristband (connects to room & payments).\n5. Explain resort map and key timings.",
+        tags=["check-in", "vip", "front desk"]
+    ),
+    SOP(
+        id="SOP-002",
+        title="Room Upgrade Policy",
+        category="Reservations",
+        content="Complimentary upgrades for Gold/Platinum members subject to availability upon arrival. Paid upgrades available for standard members. Check 'Upsell Availability' dashboard before offering.",
+        tags=["upgrade", "room", "policy"]
+    ),
+    SOP(
+        id="SOP-003",
+        title="Dietary Requirement Handling",
+        category="F&B",
+        content="1. Flag dietary restrictions in profile (Allergies in RED).\n2. Notify Executive Chef for severe allergies.\n3. Walk guest through buffet labeling system.\n4. For Halal/Kosher: Provide certified menu options.",
+        tags=["food", "allergy", "dietary"]
+    ),
+    SOP(
+        id="SOP-004",
+        title="Kids Club Registration",
+        category="Activities",
+        content="Required for children 4-17. Need vaccination record for Baby Club (4-23 months). Register via App or at lobby desk. Welcome pack includes hat and schedule.",
+        tags=["kids", "family", "activities"]
+    ),
+    SOP(
+        id="SOP-005",
+        title="Typhoon/Severe Weather Protocol",
+        category="Safety",
+        content="1. Activate 'Resort Safety Mode' in system.\n2. Send broadcast message to all guests via App/WhatsApp.\n3. Secure outdoor furniture.\n4. Direct guests to main building assembly points if necessary.",
+        tags=["safety", "emergency", "weather"]
+    ),
+    SOP(
+        id="SOP-006",
+        title="Sustainability & Eco-Initiatives (Borneo)",
+        category="General Info",
+        content="Club Med Borneo is BREEAM certified. Initiatives: 100% renewable energy, zero single-use plastic, onsite organic farm, rainwater harvesting. Explain 'Bye Bye Plastic' program to guests.",
+        tags=["sustainability", "eco", "borneo", "breeam"]
+    )
+]
+
+# ============================================================================
+# EXTENDED GUESTS (Add Borneo Persona)
+# ============================================================================
+
+DEMO_SCENARIOS.append({
+    "id": "borneo-eco",
+    "name": "Borneo Eco-Initiative Inquiry",
+    "guest_id": "G-006", # New guest
+    "messages": [
+        {"role": "guest", "content": "Hi, we are excited for our trip! We chose Borneo specifically for the eco-credentials. Can you tell us more about the BREEAM certification and plastic policy?", "delay": 0},
+    ],
+    "context": "Eco-conscious traveler visiting the new Borneo resort",
+    "booking_value": 8200,
+    "urgency": "low"
+})
+
+# ============================================================================
 # DEMO STATE MANAGEMENT
 # ============================================================================
 
@@ -412,8 +486,49 @@ class DemoSimulator:
     
     def __init__(self):
         self.guests = DEMO_GUESTS.copy()
+        
+        # Add new Borneo guest
+        self.guests["G-006"] = DemoGuest(
+            id="G-006",
+            name="Emma Green",
+            email="emma.green@example.co.uk",
+            phone="+44-7700-900000",
+            language="en",
+            nationality="British",
+            tier=GuestTier.GOLD,
+            channels=[Channel.WHATSAPP],
+            preferred_channel=Channel.WHATSAPP,
+            current_booking=Booking(
+                resort="Club Med Borneo",
+                room_type="Eco-Villa Forest View",
+                check_in="2026-04-10",
+                check_out="2026-04-17",
+                pax=2,
+                total_value=8200,
+                add_ons=["Jungle Trek", "Organic Farm Tour"]
+            ),
+            preferences=GuestPreferences(
+                dietary=["vegan"],
+                activities=["hiking", "nature photography"],
+                room_preferences=["quiet", "sustainable toiletries"],
+                communication_style="friendly",
+                special_occasions=[]
+            ),
+            ltv=GuestLTV(
+                historical_spend=22000,
+                total_visits=2,
+                avg_booking_value=11000,
+                predicted_annual=15000,
+                churn_risk="low"
+            ),
+            interaction_count=3,
+            avg_response_time_sec=15,
+            notes="Very focused on sustainability. Mention BREEAM certification."
+        )
+
         self.messages: List[DemoMessage] = []
         self.active_scenarios: Dict[str, Any] = {}
+        # Updated stats for service focus
         self.stats = {
             "total_interactions": 0,
             "channels": {"whatsapp": 0, "line": 0, "wechat": 0, "kakao": 0, "web": 0},
@@ -421,8 +536,11 @@ class DemoSimulator:
             "total_revenue_at_risk": 0,
             "sla_breaches": 0,
             "ai_suggestions_used": 0,
-            "ai_suggestions_total": 0
+            "ai_suggestions_total": 0,
+            "automation_rate": 70.1, # Fixed demo value for now based on G.M Copilot target
+            "resolution_rate": 92.5
         }
+        self.sops = DEMO_SOPS
         self._running = False
     
     def get_guests(self) -> List[Dict[str, Any]]:
@@ -434,9 +552,16 @@ class DemoSimulator:
         guest = self.guests.get(guest_id)
         return guest.to_dict() if guest else None
     
+    def get_sops(self) -> List[Dict[str, Any]]:
+        """Return all SOPs."""
+        return [asdict(sop) for sop in self.sops]
+
     def simulate_scenario(self, scenario_id: str) -> Dict[str, Any]:
         """Trigger a demo scenario and return the first message."""
-        scenario = next((s for s in DEMO_SCENARIOS if s["id"] == scenario_id), None)
+        # Check standard scenarios + the appended one
+        all_scenarios = DEMO_SCENARIOS
+        
+        scenario = next((s for s in all_scenarios if s["id"] == scenario_id), None)
         if not scenario:
             return {"error": f"Scenario not found: {scenario_id}"}
         
@@ -498,13 +623,13 @@ class DemoSimulator:
     
     def simulate_random(self) -> Dict[str, Any]:
         """Trigger a random demo scenario."""
-        scenario = random.choice(DEMO_SCENARIOS)
+        scenario = random.choice(DEMO_SCENARIOS) # This now includes the appended Borneo scenario
         return self.simulate_scenario(scenario["id"])
     
     def get_dashboard_stats(self) -> Dict[str, Any]:
         """Get comprehensive dashboard statistics."""
         total_ltv = sum(g.ltv.predicted_annual for g in self.guests.values())
-        total_booking_value = sum(
+        total_value = sum(
             g.current_booking.total_value 
             for g in self.guests.values() 
             if g.current_booking
@@ -515,9 +640,11 @@ class DemoSimulator:
                 "total_guests": len(self.guests),
                 "active_bookings": sum(1 for g in self.guests.values() if g.current_booking),
                 "total_interactions": self.stats["total_interactions"],
-                "total_booking_value": total_booking_value,
-                "total_ltv": total_ltv,
-                "avg_response_time_sec": self.stats["avg_response_time"] or 42.5
+                "total_guest_value": total_value, # Renamed from total_booking_value
+                "total_loyalty_score": total_ltv, # Renamed from total_ltv
+                "avg_response_time_sec": self.stats["avg_response_time"] or 42.5,
+                "automation_rate": self.stats["automation_rate"],
+                "resolution_rate": self.stats["resolution_rate"]
             },
             "channel_distribution": self.stats["channels"],
             "tier_breakdown": {
@@ -526,10 +653,10 @@ class DemoSimulator:
                 "Silver": sum(1 for g in self.guests.values() if g.tier == GuestTier.SILVER),
                 "Member": sum(1 for g in self.guests.values() if g.tier == GuestTier.MEMBER)
             },
-            "top_guests_by_ltv": sorted(
-                [{"name": g.name, "ltv": g.ltv.predicted_annual, "tier": g.tier.value} 
+            "top_guests_by_loyalty": sorted( # Renamed from by_ltv
+                [{"name": g.name, "score": g.ltv.predicted_annual, "tier": g.tier.value} 
                  for g in self.guests.values()],
-                key=lambda x: x["ltv"],
+                key=lambda x: x["score"],
                 reverse=True
             )[:5],
             "sla_performance": {
@@ -544,38 +671,31 @@ class DemoSimulator:
                 "avg_confidence": 0.87,
                 "languages_detected": ["en", "ja", "zh", "fr", "ko"]
             },
-            "revenue_at_risk": self.stats["total_revenue_at_risk"]
+            "needs_attention_value": self.stats["total_revenue_at_risk"] # Renamed from revenue_at_risk
         }
     
     def get_scenarios(self) -> List[Dict[str, Any]]:
         """List all available demo scenarios."""
-        return [
-            {
+        # Ensure we return valid guest names even for new appended scenarios
+        results = []
+        for s in DEMO_SCENARIOS:
+            guest = self.guests.get(s["guest_id"])
+            results.append({
                 "id": s["id"],
                 "name": s["name"],
                 "guest_id": s["guest_id"],
-                "guest_name": self.guests.get(s["guest_id"], DemoGuest).name if s["guest_id"] in self.guests else "Unknown",
-                "channel": self.guests[s["guest_id"]].preferred_channel.value if s["guest_id"] in self.guests else "unknown",
+                "guest_name": guest.name if guest else "Unknown",
+                "channel": guest.preferred_channel.value if guest else "unknown",
                 "booking_value": s["booking_value"],
                 "urgency": s["urgency"],
                 "context": s["context"]
-            }
-            for s in DEMO_SCENARIOS
-        ]
+            })
+        return results
     
     def reset(self):
         """Reset demo state to initial."""
-        self.guests = {k: DemoGuest(**asdict(v)) for k, v in DEMO_GUESTS.items()}
-        self.messages = []
-        self.stats = {
-            "total_interactions": 0,
-            "channels": {"whatsapp": 0, "line": 0, "wechat": 0, "kakao": 0, "web": 0},
-            "avg_response_time": 0,
-            "total_revenue_at_risk": 0,
-            "sla_breaches": 0,
-            "ai_suggestions_used": 0,
-            "ai_suggestions_total": 0
-        }
+        # reset needs to re-instantiate guests including G-006
+        self.__init__()
         return {"status": "reset", "message": "Demo state cleared"}
 
 

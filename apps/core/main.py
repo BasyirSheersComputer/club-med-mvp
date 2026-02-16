@@ -1461,6 +1461,12 @@ async def demo_list_scenarios():
     return {"scenarios": demo_simulator.get_scenarios()}
 
 
+@app.get("/demo/sops")
+async def demo_list_sops():
+    """List all Standard Operating Procedures."""
+    return {"sops": demo_simulator.get_sops()}
+
+
 @app.post("/demo/simulate/{scenario_id}")
 async def demo_trigger_scenario(scenario_id: str):
     """
